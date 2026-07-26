@@ -75,12 +75,12 @@ jobs:
             ${DEFAULT_TAG}
 
       # This is optional, this provides smaller delta updates
-      - name: Rechunk with rpm-ostree
-        id: rechunk
-        run: |
-          sudo -E $(command -v just) ostree-rechunk \
-            ${IMAGE_NAME} \
-            ${DEFAULT_TAG}
+     # - name: Rechunk with rpm-ostree
+      #  id: rechunk
+       # run: |
+        #  sudo -E $(command -v just) ostree-rechunk \
+         #   ${IMAGE_NAME} \
+          #  ${DEFAULT_TAG}
 
       # If you are feeling adventurous, use the new distro agnostic rechunker
       # https://github.com/coreos/chunkah
