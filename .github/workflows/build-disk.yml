@@ -20,7 +20,7 @@ on:
       - main
     paths:
       - './disk_config/disk.toml'
-      - './disk_config/iso.toml'
+      - './disk_config/iso-kde.toml'
       - './.github/workflows/build-disk.yml'
 
 env:
