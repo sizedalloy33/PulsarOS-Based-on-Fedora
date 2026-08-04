@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Exec=/usr/bin/pulsaros-set-wallpaper.sh
+Name=PulsarOS Set Wallpaper
+NoDisplay=true
+X-KDE-autostart-phase=1

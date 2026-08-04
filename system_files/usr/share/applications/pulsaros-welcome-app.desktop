@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PulsarOS Welcome App
+Comment=Easily Install Reccomended Programs, Drivers, and more
+Exec=/usr/bin/python3 /usr/bin/pulsaros-welcome-app.py --force
+Icon=preferences-desktop
+Categories=System;
+Terminal=false

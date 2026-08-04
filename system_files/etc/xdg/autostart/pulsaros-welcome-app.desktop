@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Exec=/usr/bin/python3 /usr/bin/pulsaros-welcome-app.py
+Name=PulsarOS Welcome App
+NoDisplay=true
+X-KDE-autostart-phase=1

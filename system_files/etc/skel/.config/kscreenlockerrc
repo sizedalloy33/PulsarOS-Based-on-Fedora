@@ -1,0 +1,7 @@
+[Greeter][Wallpaper][org.kde.image][General]
+Image=file:///usr/share/wallpapers/PulsarYellow
+PreviewImage=file:///usr/share/wallpapers/PulsarYellow
+SlidePaths=/usr/share/wallpapers
+
+[Greeter]
+WallpaperPlugin=org.kde.image
