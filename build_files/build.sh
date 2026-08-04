@@ -22,6 +22,13 @@ rm -f /usr/share/applications/bazzite-documentation.desktop
 # remove rpms included in bazzite that don't apply to the os
 rpm-ostree override remove bazzite-portal steamdeck-kde-presets-desktop
 rpm-ostree override remove openh264 || echo "not present, skipping"
+rpm-ostree override remove hid-fanatecff kmod-hid-fanatecff hid-fanatecff-akmod-modules || echo "Fanatec packages not found, skipping"
+rpm-ostree override remove hid-tmff2 kmod-hid-tmff2 hid-tmff2-akmod-modules || echo "Thrustmaster packages not found, skipping"
+rpm-ostree override remove new-lg4ff new-lg4ff-akmod-modules kmod-new-lg4ff || echo "Logitech packages not found, skipping"
+rpm-ostree override remove openrazer-kmod-common kmod-openrazer || echo "Razer packages not found, skipping"
+# Cockpit (system management web UI) - moved to welcome app
+rpm-ostree override remove cockpit-bridge cockpit-files cockpit-networkmanager cockpit-podman cockpit-selinux cockpit-storaged cockpit-system || echo "Cockpit packages not found, skipping"
+rpm-ostree override remove xwiimote-ng || echo "xwiimote-ng not found, skipping"
 
 # enabling an already existing repo
 dnf5 config-manager setopt fedora-cisco-openh264.enabled=1

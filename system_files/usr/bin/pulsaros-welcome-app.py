@@ -26,6 +26,15 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib
 
+def ensure_user_remote():
+    try:
+        subprocess.run(
+            ["flatpak", "remote-add", "--if-not-exists", "--user",
+            "flathub", "https://dl.flathub.org/repo/flathub.flatpakrepo"],
+            capture_output=True, text=True
+        )
+    except Exception as e:
+        print (f"Warning: could not ensure flathub remote: {e}")
 
 # ---------------------------------------------------------------------------
 # All installable items live here. To add something new, add one dict below.
@@ -107,9 +116,23 @@ ITEMS = [
         "tab": "Drivers",
         "reboot": True,
     },
+    {
+    "name": "Cockpit",
+    "description": "Web-based system management UI for monitoring, storage, networking, and containers",
+    "command": ["sudo", "rpm-ostree", "install", "cockpit-bridge", "cockpit-files", "cockpit-networkmanager", "cockpit-podman", "cockpit-selinux", "cockpit-storaged", "cockpit-system"],
+    "tab": "System",
+    "reboot": True,
+    },
+    {
+    "name": "Wii Remote Support",
+    "description": "Driver support for Nintendo Wii Remote and Wii U Pro Controller via Bluetooth",
+    "command": ["sudo", "rpm-ostree", "install", "xwiimote-ng"],
+    "tab": "Drivers",
+    "reboot": True,
+    },
 ]
 
-TAB_ORDER = ["Recommended", "Essentials", "Drivers", "Gaming", "Productivity"]
+TAB_ORDER = ["Recommended", "Essentials", "Drivers", "Gaming", "Productivity", "System"]
 
 # If this file exists, the app won't auto-launch at startup (it can still be
 # opened manually from the app menu, which passes --force and skips this check).
@@ -213,6 +236,7 @@ class InstallRow(Gtk.Box):
 class WelcomeWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title="Welcome to PulsarOS")
+        ensure_user_remote()
         self.set_default_size(600, 450)
         self.set_border_width(0)
 
