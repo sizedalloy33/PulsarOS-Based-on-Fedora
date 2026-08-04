@@ -135,7 +135,9 @@ jobs:
         id: push-staging
         run: |
           set -euox pipefail
-          sudo -E podman push --digestfile=/tmp/digestfile \
+          sudo -E podman push \
+            --authfile /home/runner/.docker/config.json \
+            --digestfile=/tmp/digestfile \
             ${IMAGE_NAME}:${DEFAULT_TAG} \
             ${IMAGE_REGISTRY}/${IMAGE_NAME}:staging
 
@@ -202,6 +204,7 @@ jobs:
           set -euox pipefail
           for tag in ${ALIAS_TAGS}; do
             sudo skopeo copy \
+              --authfile /home/runner/.docker/config.json \
               --digestfile=/tmp/digestfile \
               docker://${IMAGE_REGISTRY}/${IMAGE_NAME}@${STAGING_DIGEST} \
               docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}
