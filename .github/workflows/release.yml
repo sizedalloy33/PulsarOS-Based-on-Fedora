@@ -13,7 +13,7 @@ on:
         required: false
         type: string
       tag:
-        description: "Release tag (optional; defaults to vYYYYMMDD-<short-sha>)"
+        description: "Release tag (optional; defaults to vYYYYMMDD-amd64 or vYYYYMMDD-arm64)"
         required: false
         type: string
 permissions:
@@ -36,12 +36,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
-            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            run_id="${{ github.event.workflow_run.id }}"
+            sha="${{ github.event.workflow_run.head_sha }}"
           elif [[ -n "${{ inputs.run-id }}" ]]; then
-            echo "run_id=${{ inputs.run-id }}" >> "$GITHUB_OUTPUT"
-            sha="$(gh api "repos/${{ github.repository }}/actions/runs/${{ inputs.run-id }}" --jq .head_sha)"
-            echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+            run_id="${{ inputs.run-id }}"
+            sha="$(gh api "repos/${{ github.repository }}/actions/runs/${run_id}" --jq .head_sha)"
           else
             run_id="$(gh run list \
               --workflow build-disk.yml \
@@ -50,16 +49,27 @@ jobs:
               --limit 1 \
               --json databaseId \
               --jq '.[0].databaseId')"
-            echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
             sha="$(gh api "repos/${{ github.repository }}/actions/runs/${run_id}" --jq .head_sha)"
-            echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           fi
-      - name: Checkout release commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ steps.source-run.outputs.sha }}
+
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+          platform="$(gh api "repos/${{ github.repository }}/actions/runs/${run_id}/artifacts" \
+            --paginate \
+            --jq '[.artifacts[].name | capture("pulsaros-(?<platform>amd64|arm64)-").platform] | map(select(. != null)) | unique | .[0] // empty')"
+          if [[ -z "${platform}" ]]; then
+            display_title="$(gh api "repos/${{ github.repository }}/actions/runs/${run_id}" --jq -r '.display_title')"
+            if [[ "${display_title}" =~ \((amd64|arm64)\) ]]; then
+              platform="${BASH_REMATCH[1]}"
+            fi
+          fi
+          if [[ -z "${platform}" ]]; then
+            platform="unknown"
+          fi
+          echo "platform=${platform}" >> "$GITHUB_OUTPUT"
       - name: Download build artifacts
-        uses: actions/download-artifact@07f8e0c8e3d2f2a9b4d3e8c1f2a3b4c5d6e7f8a9 # v6.0.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ steps.source-run.outputs.run_id }}
@@ -69,17 +79,17 @@ jobs:
         id: version
         env:
           INPUT_TAG: ${{ inputs.tag }}
+          PLATFORM: ${{ steps.source-run.outputs.platform }}
         run: |
           if [[ -n "${INPUT_TAG}" ]]; then
             tag="${INPUT_TAG}"
           else
             date="$(date -u +%Y%m%d)"
-            sha="$(git rev-parse --short HEAD)"
-            tag="v${date}-${sha}"
+            tag="v${date}-${PLATFORM}"
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@7b4dc47105e1434c474a2657b8811fac9ca8fdf4 # v2.2.0
+        uses: softprops/action-gh-release@7b4da11513bf3f43f9999e90eabced41ab8bb048 # v2.2.0
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: PulsarOS ${{ steps.version.outputs.tag }}

@@ -1,5 +1,6 @@
 ---
 name: Build disk images
+run-name: Build disk images (${{ github.event_name == 'workflow_dispatch' && inputs.platform || github.event_name }})
 
 on:
   workflow_dispatch:
@@ -95,11 +96,42 @@ jobs:
           types: ${{ matrix.disk-type }}
           additional-args: --use-librepo=True --rootfs btrfs
 
+      - name: Rename disk images
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          platform="${{ inputs.platform }}"
+          disk_type="${{ matrix.disk-type }}"
+          name="pulsaros-${platform}-${disk_type}"
+
+          if [[ "${disk_type}" == "qcow2" ]]; then
+            src="${{ steps.build.outputs.qcow2-output-path }}"
+            dest_name="${name}.qcow2"
+          else
+            src="${{ steps.build.outputs.anaconda-iso-output-path }}"
+            dest_name="${name}.iso"
+          fi
+
+          if [[ -z "${src}" || ! -f "${src}" ]]; then
+            echo "Expected output file not found for ${disk_type}" >&2
+            exit 1
+          fi
+
+          dir="$(dirname "${src}")"
+          base="$(basename "${src}")"
+          mv "${src}" "${dir}/${dest_name}"
+          shopt -s nullglob
+          for sidecar in "${dir}/${base}".*; do
+            suffix="${sidecar#${dir}/${base}}"
+            mv "${sidecar}" "${dir}/${dest_name}${suffix}"
+          done
+
       - name: Upload disk images and Checksum to Job Artifacts
         if: inputs.upload-to-s3 != true && github.event_name != 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pulsaros-${{matrix.disk-type }}
+          name: pulsaros-${{ inputs.platform }}-${{ matrix.disk-type }}
           path: ${{ steps.build.outputs.output-directory }}
           if-no-files-found: error
           retention-days: 0
