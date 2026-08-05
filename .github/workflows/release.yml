@@ -1,0 +1,88 @@
+---
+name: Release disk images
+on:
+  workflow_run:
+    workflows:
+      - Build disk images
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: "Build disk images workflow run ID (optional; defaults to latest successful run on main)"
+        required: false
+        type: string
+      tag:
+        description: "Release tag (optional; defaults to vYYYYMMDD-<short-sha>)"
+        required: false
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.event != 'pull_request'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve source workflow run
+        id: source-run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ inputs.run-id }}" ]]; then
+            echo "run_id=${{ inputs.run-id }}" >> "$GITHUB_OUTPUT"
+            sha="$(gh api "repos/${{ github.repository }}/actions/runs/${{ inputs.run-id }}" --jq .head_sha)"
+            echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          else
+            run_id="$(gh run list \
+              --workflow build-disk.yml \
+              --branch main \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+            echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+            sha="$(gh api "repos/${{ github.repository }}/actions/runs/${run_id}" --jq .head_sha)"
+            echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Checkout release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ steps.source-run.outputs.sha }}
+      - name: Download build artifacts
+        uses: actions/download-artifact@07f8e0c8e3d2f2a9b4d3e8c1f2a3b4c5d6e7f8a9 # v6.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.source-run.outputs.run_id }}
+          merge-multiple: true
+          path: release-assets
+      - name: Generate release tag
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ -n "${INPUT_TAG}" ]]; then
+            tag="${INPUT_TAG}"
+          else
+            date="$(date -u +%Y%m%d)"
+            sha="$(git rev-parse --short HEAD)"
+            tag="v${date}-${sha}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@7b4dc47105e1434c474a2657b8811fac9ca8fdf4 # v2.2.0
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: PulsarOS ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ steps.source-run.outputs.sha }}
+          generate_release_notes: true
+          files: release-assets/**
