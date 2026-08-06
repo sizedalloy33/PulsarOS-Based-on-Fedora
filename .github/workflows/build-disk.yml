@@ -1,21 +1,13 @@
 ---
+
+# Modified by Sizedalloy33 in 2026
+# Originally sourced from Universal Blue (Apache-2.0)
+
 name: Build disk images
-run-name: Build disk images (${{ github.event_name == 'workflow_dispatch' && inputs.platform || github.event_name }})
+run-name: Build disk images (${{ github.event_name }})
 
 on:
   workflow_dispatch:
-    inputs:
-      upload-to-s3:
-        description: "Upload to S3"
-        required: false
-        default: false
-        type: boolean
-      platform:
-        required: true
-        type: choice
-        options:
-          - amd64
-          - arm64
   pull_request:
     branches:
       - main
@@ -37,7 +29,7 @@ concurrency:
 jobs:
   build:
     name: Build disk images
-    runs-on: ${{ inputs.platform == 'amd64' && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -61,16 +53,7 @@ jobs:
           echo "USER_UID=${USER_UID}" >> ${GITHUB_ENV}
           echo "USER_GID=${USER_GID}" >> ${GITHUB_ENV}
 
-      - name: Install dependencies
-        if: inputs.platform == 'arm64'
-        run: |
-          set -x
-          sudo apt update -y
-          sudo apt install -y \
-            podman
-
       - name: Maximize build space
-        #if: inputs.platform != 'arm64'
         uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
         with:
           remove-codeql: true
@@ -96,60 +79,114 @@ jobs:
           types: ${{ matrix.disk-type }}
           additional-args: --use-librepo=True --rootfs btrfs
 
-      - name: Rename disk images
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          set -euo pipefail
-          platform="${{ inputs.platform }}"
-          disk_type="${{ matrix.disk-type }}"
-          name="pulsaros-${platform}-${disk_type}"
-
-          if [[ "${disk_type}" == "qcow2" ]]; then
-            src="${{ steps.build.outputs.qcow2-output-path }}"
-            dest_name="${name}.qcow2"
-          else
-            src="${{ steps.build.outputs.anaconda-iso-output-path }}"
-            dest_name="${name}.iso"
-          fi
-
-          if [[ -z "${src}" || ! -f "${src}" ]]; then
-            echo "Expected output file not found for ${disk_type}" >&2
-            exit 1
-          fi
-
-          dir="$(dirname "${src}")"
-          base="$(basename "${src}")"
-          mv "${src}" "${dir}/${dest_name}"
-          shopt -s nullglob
-          for sidecar in "${dir}/${base}".*; do
-            suffix="${sidecar#${dir}/${base}}"
-            mv "${sidecar}" "${dir}/${dest_name}${suffix}"
-          done
-
-      - name: Upload disk images and Checksum to Job Artifacts
-        if: inputs.upload-to-s3 != true && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pulsaros-${{ inputs.platform }}-${{ matrix.disk-type }}
-          path: ${{ steps.build.outputs.output-directory }}
-          if-no-files-found: error
-          retention-days: 0
-          compression-level: 0
-          overwrite: true
-      
-      - name: Upload to S3
-        if: inputs.upload-to-s3 == true && github.event_name != 'pull_request'
+      - name: Checksum outputs
+        if: github.event_name != 'pull_request'
         shell: bash
         env:
-          RCLONE_CONFIG_S3_TYPE: s3
-          RCLONE_CONFIG_S3_PROVIDER: ${{ secrets.S3_PROVIDER }}
-          RCLONE_CONFIG_S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
-          RCLONE_CONFIG_S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          RCLONE_CONFIG_S3_REGION: ${{ secrets.S3_REGION }}
-          RCLONE_CONFIG_S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
           SOURCE_DIR: ${{ steps.build.outputs.output-directory }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y rclone
-          rclone copy $SOURCE_DIR S3:${{ secrets.S3_BUCKET_NAME }}
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          for f in *; do
+            [[ -f "$f" ]] || continue
+            [[ "$f" == *.sha256 ]] && continue
+            sha256sum "$f" > "${f}.sha256"
+          done
+
+      - name: Upload to Cloudflare R2 (latest only)
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          SOURCE_DIR: ${{ steps.build.outputs.output-directory }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DISK_TYPE: ${{ matrix.disk-type }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y rclone jq
+
+          # Normalize the extension for this disk type
+          ext="iso"; [[ "$DISK_TYPE" == "qcow2" ]] && ext="qcow2"
+
+          # Stage the output under a stable, human-friendly filename
+          mkdir -p latest_stage
+          for f in "$SOURCE_DIR"/*."$ext"; do
+            [[ -f "$f" ]] || continue
+            cp "$f" "latest_stage/pulsaros-amd64.${ext}"
+          done
+
+          # Regenerate the checksum against the renamed file
+          sum="$(sha256sum "latest_stage/pulsaros-amd64.${ext}" | awk '{print $1}')"
+          echo "${sum}  pulsaros-amd64.${ext}" > "latest_stage/pulsaros-amd64.${ext}.sha256"
+
+          # Overwrite the stable "latest" object for this disk type
+          rclone copy latest_stage "R2:${R2_BUCKET}/pulsaros/latest" --progress
+
+          # Merge this disk type's metadata into the shared manifest
+          rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json || echo '{}' > manifest.json
+          size="$(stat -c%s "latest_stage/pulsaros-amd64.${ext}")"
+          date="$(date -u +%Y%m%d)"
+          jq --arg type "$DISK_TYPE" --arg ext "$ext" \
+             --arg size "$size" --arg sha "$sum" --arg date "$date" \
+             '.[$type] = {filename: ("pulsaros-amd64." + $ext), size: ($size|tonumber), sha256: $sha, date: $date}' \
+             manifest.json > manifest.new.json
+          rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json"
+
+      - name: Regenerate download page
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y rclone
+          rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json
+
+          python3 - "$BASE_URL" <<'PYEOF'
+          import json, sys
+          base = sys.argv[1].rstrip("/")
+          m = json.load(open("manifest.json"))
+
+          def human(n):
+              for unit in ["B", "KB", "MB", "GB"]:
+                  if n < 1024:
+                      return f"{n:.1f}{unit}"
+                  n /= 1024
+              return f"{n:.1f}TB"
+
+          rows = ""
+          for typ, info in sorted(m.items()):
+              label = "ISO (installer)" if typ == "anaconda-iso" else "QCOW2 (VM image)"
+              url = f"{base}/pulsaros/latest/{info['filename']}"
+              rows += f"""
+              <tr>
+                <td>{label}</td>
+                <td><a href="{url}">{info['filename']}</a></td>
+                <td>{human(info['size'])}</td>
+                <td><code>{info['sha256'][:12]}\u2026</code></td>
+                <td>{info['date']}</td>
+              </tr>"""
+
+          html = f"""<!doctype html><html><head><meta charset="utf-8">
+          <title>PulsarOS Downloads</title>
+          <style>body{{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 16px}}
+          table{{width:100%;border-collapse:collapse}} td,th{{padding:8px;border-bottom:1px solid #ddd;text-align:left}}
+          a{{text-decoration:none}} code{{font-size:0.85em;color:#666}}</style></head>
+          <body><h1>PulsarOS Downloads</h1>
+          <p>Always the latest build. Verify with the sha256 file next to each image.</p>
+          <table><tr><th>Type</th><th>File</th><th>Size</th><th>SHA256</th><th>Built</th></tr>
+          {rows}</table></body></html>"""
+          open("index.html", "w").write(html)
+          PYEOF
+
+          rclone copyto index.html "R2:${R2_BUCKET}/index.html"

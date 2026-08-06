@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Modified by Sizedalloy33 in 2026
+# Originally sourced from Universal Blue (Apache-2.0)
+
 set -ouex pipefail
 
 # Copy the contents of system_files/ of the git repo to /

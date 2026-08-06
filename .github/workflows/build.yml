@@ -1,4 +1,8 @@
 ---
+
+# Modified by Sizedalloy33 in 2026
+# Originally sourced from Universal Blue (Apache-2.0)
+
 name: Build container image
 on:
   pull_request:

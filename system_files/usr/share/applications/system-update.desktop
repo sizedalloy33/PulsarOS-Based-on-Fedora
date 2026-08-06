@@ -1,4 +1,8 @@
+
 [Desktop Entry]
+# Credit: Original updater shortcut provided by Universal Blue & Bazzite
+X-Derived-From=Bazzite
+X-Original-URL=https://github.com/ublue-os/bazzite
 Type=Application
 Name=System Update
 Name[cs]=Aktualizace systému
@@ -10,7 +14,7 @@ Comment[cs]=Aktualizace PulsarOS, Flatpaků a dalších
 Comment[fr]=Met à jour PulsarOS, les applications et plus encore
 Comment[el]=Ενημερώνει το PulsarOS, τα Flatpaks και άλλα
 Comment[ru]=Обновить PulsarOS, Flatpak и многое другое
-Icon=/usr/share/ublue-os/bazzite/update.svg
+Icon=/usr/share/icons/hicolor/scalable/apps/pulsaros-updater-logo.svg
 Categories=ConsoleOnly;System;
 Terminal=true
 Exec=/usr/bin/ujust update

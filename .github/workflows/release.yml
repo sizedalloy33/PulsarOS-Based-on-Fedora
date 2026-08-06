@@ -1,4 +1,9 @@
 ---
+
+# Copyright (c) 2026 Sizedalloy33
+# SPDX-License-Identifier: Apache-2.0
+# See LICENSE file in the project root for full license information.
+
 name: Release disk images
 on:
   workflow_run:
@@ -13,7 +18,7 @@ on:
         required: false
         type: string
       tag:
-        description: "Release tag (optional; defaults to vYYYYMMDD-amd64 or vYYYYMMDD-arm64)"
+        description: "Release tag (optional; defaults to vYYYYMMDD)"
         required: false
         type: string
 permissions:
@@ -55,39 +60,35 @@ jobs:
           echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
-          platform="$(gh api "repos/${{ github.repository }}/actions/runs/${run_id}/artifacts" \
-            --paginate \
-            --jq '[.artifacts[].name | capture("pulsaros-(?<platform>amd64|arm64)-").platform] | map(select(. != null)) | unique | .[0] // empty')"
-          if [[ -z "${platform}" ]]; then
-            display_title="$(gh api "repos/${{ github.repository }}/actions/runs/${run_id}" --jq -r '.display_title')"
-            if [[ "${display_title}" =~ \((amd64|arm64)\) ]]; then
-              platform="${BASH_REMATCH[1]}"
-            fi
-          fi
-          if [[ -z "${platform}" ]]; then
-            platform="unknown"
-          fi
-          echo "platform=${platform}" >> "$GITHUB_OUTPUT"
-      - name: Download build artifacts
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ steps.source-run.outputs.run_id }}
-          merge-multiple: true
-          path: release-assets
       - name: Generate release tag
         id: version
         env:
           INPUT_TAG: ${{ inputs.tag }}
-          PLATFORM: ${{ steps.source-run.outputs.platform }}
         run: |
           if [[ -n "${INPUT_TAG}" ]]; then
             tag="${INPUT_TAG}"
           else
             date="$(date -u +%Y%m%d)"
-            tag="v${date}-${PLATFORM}"
+            tag="v${date}"
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release notes body
+        env:
+          BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Downloads"
+            echo
+            echo "All downloads: ${BASE_URL%/}/"
+            echo
+            echo "| Type | Link |"
+            echo "|---|---|"
+            echo "| ISO | ${BASE_URL%/}/pulsaros/latest/pulsaros-amd64.iso |"
+            echo "| QCOW2 | ${BASE_URL%/}/pulsaros/latest/pulsaros-amd64.qcow2 |"
+          } > body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@7b4da11513bf3f43f9999e90eabced41ab8bb048 # v2.2.0
         with:
@@ -95,4 +96,5 @@ jobs:
           name: PulsarOS ${{ steps.version.outputs.tag }}
           target_commitish: ${{ steps.source-run.outputs.sha }}
           generate_release_notes: true
-          files: release-assets/**
+          append_body: true
+          body_path: body.md

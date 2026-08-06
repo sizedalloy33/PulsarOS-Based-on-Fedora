@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Sizedalloy33
+# SPDX-License-Identifier: Apache-2.0
+# See LICENSE file in the project root for full license information.
 DISABLE_FLAG="$HOME/.config/no-welcome-message"
 GOLD="\033[38;2;232;203;45m"
 RESET="\033[0m"

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Sizedalloy33
+# SPDX-License-Identifier: Apache-2.0
+# See LICENSE file in the project root for full license information.
 """
 PulsarOS Welcome App
 
@@ -67,6 +70,13 @@ ITEMS = [
         "tab": "Recommended",
         "reboot": False,
     },
+   {
+        "name": "Prism Launcher",
+        "description": "An open-source Minecraft launcher with the ability to manage multiple instances, accounts and mods.",
+        "command": ["flatpak", "install", "-y", "--user", "flathub", "org.prismlauncher.PrismLauncher"],
+        "tab": "Gaming",
+        "reboot": False,
+    },
     {
         "name": "Video Codec Support (H.264)",
         "description": "Enables smooth video calls and playback in Firefox (WebRTC, some streaming sites)",
@@ -117,11 +127,11 @@ ITEMS = [
         "reboot": True,
     },
     {
-    "name": "Cockpit",
-    "description": "Web-based system management UI for monitoring, storage, networking, and containers",
-    "command": ["sudo", "rpm-ostree", "install", "cockpit-bridge", "cockpit-files", "cockpit-networkmanager", "cockpit-podman", "cockpit-selinux", "cockpit-storaged", "cockpit-system"],
-    "tab": "System",
-    "reboot": True,
+    	"name": "Cockpit",
+    	"description": "Web-based system management UI for monitoring, storage, networking, and containers",
+    	"command": ["sudo", "rpm-ostree", "install", "cockpit-bridge", "cockpit-files", "cockpit-networkmanager", "cockpit-podman", "cockpit-selinux", "cockpit-storaged", "cockpit-system"],
+    	"tab": "System",
+    	"reboot": True,
     },
     {
     "name": "Wii Remote Support",
