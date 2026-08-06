@@ -21,6 +21,14 @@ env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
   DEFAULT_TAG: "latest"
   BIB_IMAGE: "quay.io/centos-bootc/bootc-image-builder:latest"
+  # Global rclone R2 configuration & compatibility flags
+  RCLONE_CONFIG_R2_TYPE: s3
+  RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+  RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+  RCLONE_S3_DISABLE_CHECKSUM: "true"
+  RCLONE_S3_NO_HEAD: "true"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
@@ -45,9 +53,7 @@ jobs:
         run: |
           USER_UID=$(id -u)
           USER_GID=$(id -g)
-          # Concatenate the types with a hyphen
           DISK_TYPE=$(echo "${{ matrix.disk-type }}" | tr ' ' '-')
-          # Lowercase the image uri
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
           echo "DISK_TYPE=${DISK_TYPE}" >> ${GITHUB_ENV}
@@ -84,11 +90,6 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: bash
         env:
-          RCLONE_CONFIG_R2_TYPE: s3
-          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
-          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           DISK_TYPE: ${{ matrix.disk-type }}
           QCOW2_PATH: ${{ steps.build.outputs.qcow2-output-path }}
@@ -97,8 +98,6 @@ jobs:
           set -euo pipefail
           sudo apt-get update -y && sudo apt-get install -y rclone jq
 
-          # Use the action's own output paths rather than guessing by extension —
-          # the build output is nested under output-directory, not flat.
           if [[ "$DISK_TYPE" == "qcow2" ]]; then
             ext="qcow2"
             src="$QCOW2_PATH"
@@ -112,26 +111,15 @@ jobs:
             exit 1
           fi
 
-          # Stage the output under a stable, human-friendly filename
           mkdir -p latest_stage
           cp "$src" "latest_stage/pulsaros-amd64.${ext}"
 
-          # Compute the checksum against the renamed file
           sum="$(sha256sum "latest_stage/pulsaros-amd64.${ext}" | awk '{print $1}')"
           echo "${sum}  pulsaros-amd64.${ext}" > "latest_stage/pulsaros-amd64.${ext}.sha256"
 
-          # Overwrite the stable "latest" object for this disk type.
-          # --no-update-modtime / --ignore-times avoid a known rclone+R2
-          # incompatibility: rclone can try to patch just the mtime on an
-          # unchanged file via an in-place metadata update, which R2's S3 API
-          # returns "501 NotImplemented" for. These flags force a plain
-          # overwrite instead.
           rclone copy latest_stage "R2:${R2_BUCKET}/pulsaros/latest" \
-            --no-update-modtime --ignore-times --progress
+            --no-update-modtime --ignore-times --s3-chunk-size 100M --progress
 
-          # Merge this disk type's metadata into the shared manifest.
-          # Defensive: guarantee manifest.json exists locally no matter what
-          # happened above, so jq never fails with "file not found".
           set +e
           rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json --no-update-modtime
           dl_status=$?
@@ -152,11 +140,6 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: bash
         env:
-          RCLONE_CONFIG_R2_TYPE: s3
-          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
-          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
         run: |
