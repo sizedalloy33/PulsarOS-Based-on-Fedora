@@ -120,18 +120,33 @@ jobs:
           sum="$(sha256sum "latest_stage/pulsaros-amd64.${ext}" | awk '{print $1}')"
           echo "${sum}  pulsaros-amd64.${ext}" > "latest_stage/pulsaros-amd64.${ext}.sha256"
 
-          # Overwrite the stable "latest" object for this disk type
-          rclone copy latest_stage "R2:${R2_BUCKET}/pulsaros/latest" --progress
+          # Overwrite the stable "latest" object for this disk type.
+          # --no-update-modtime / --ignore-times avoid a known rclone+R2
+          # incompatibility: rclone can try to patch just the mtime on an
+          # unchanged file via an in-place metadata update, which R2's S3 API
+          # returns "501 NotImplemented" for. These flags force a plain
+          # overwrite instead.
+          rclone copy latest_stage "R2:${R2_BUCKET}/pulsaros/latest" \
+            --no-update-modtime --ignore-times --progress
 
-          # Merge this disk type's metadata into the shared manifest
-          rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json || echo '{}' > manifest.json
+          # Merge this disk type's metadata into the shared manifest.
+          # Defensive: guarantee manifest.json exists locally no matter what
+          # happened above, so jq never fails with "file not found".
+          set +e
+          rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json --no-update-modtime
+          dl_status=$?
+          set -e
+          if [[ ${dl_status} -ne 0 || ! -f manifest.json ]]; then
+            echo '{}' > manifest.json
+          fi
+
           size="$(stat -c%s "latest_stage/pulsaros-amd64.${ext}")"
           date="$(date -u +%Y%m%d)"
           jq --arg type "$DISK_TYPE" --arg ext "$ext" \
              --arg size "$size" --arg sha "$sum" --arg date "$date" \
              '.[$type] = {filename: ("pulsaros-amd64." + $ext), size: ($size|tonumber), sha256: $sha, date: $date}' \
              manifest.json > manifest.new.json
-          rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json"
+          rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json" --no-update-modtime --ignore-times
 
       - name: Regenerate download page
         if: github.event_name != 'pull_request'
@@ -147,7 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -y && sudo apt-get install -y rclone
-          rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json
+          rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json --no-update-modtime
 
           python3 - "$BASE_URL" <<'PYEOF'
           import json, sys
@@ -186,4 +201,4 @@ jobs:
           open("index.html", "w").write(html)
           PYEOF
 
-          rclone copyto index.html "R2:${R2_BUCKET}/index.html"
+          rclone copyto index.html "R2:${R2_BUCKET}/index.html" --no-update-modtime --ignore-times
