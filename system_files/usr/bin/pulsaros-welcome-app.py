@@ -80,7 +80,11 @@ ITEMS = [
     {
         "name": "Video Codec Support (H.264)",
         "description": "Enables smooth video calls and playback in Firefox (WebRTC, some streaming sites)",
-        "command": ["sudo", "rpm-ostree", "install", "mozilla-openh264"],
+        "command": [
+            "bash", "-c",
+            "sudo rpm-override remove noopenh264 || true;",
+            "sudo rpm-ostree install openh264"
+            ],
         "tab": "Essentials",
         "reboot": True,
     },
