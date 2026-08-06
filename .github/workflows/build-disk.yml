@@ -79,20 +79,6 @@ jobs:
           types: ${{ matrix.disk-type }}
           additional-args: --use-librepo=True --rootfs btrfs
 
-      - name: Checksum outputs
-        if: github.event_name != 'pull_request'
-        shell: bash
-        env:
-          SOURCE_DIR: ${{ steps.build.outputs.output-directory }}
-        run: |
-          set -euo pipefail
-          cd "$SOURCE_DIR"
-          for f in *; do
-            [[ -f "$f" ]] || continue
-            [[ "$f" == *.sha256 ]] && continue
-            sha256sum "$f" > "${f}.sha256"
-          done
-
       - name: Upload to Cloudflare R2 (latest only)
         if: github.event_name != 'pull_request'
         shell: bash
@@ -102,24 +88,34 @@ jobs:
           RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          SOURCE_DIR: ${{ steps.build.outputs.output-directory }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           DISK_TYPE: ${{ matrix.disk-type }}
+          QCOW2_PATH: ${{ steps.build.outputs.qcow2-output-path }}
+          ISO_PATH: ${{ steps.build.outputs.anaconda-iso-output-path }}
         run: |
           set -euo pipefail
           sudo apt-get update -y && sudo apt-get install -y rclone jq
 
-          # Normalize the extension for this disk type
-          ext="iso"; [[ "$DISK_TYPE" == "qcow2" ]] && ext="qcow2"
+          # Use the action's own output paths rather than guessing by extension —
+          # the build output is nested under output-directory, not flat.
+          if [[ "$DISK_TYPE" == "qcow2" ]]; then
+            ext="qcow2"
+            src="$QCOW2_PATH"
+          else
+            ext="iso"
+            src="$ISO_PATH"
+          fi
+
+          if [[ -z "$src" || ! -f "$src" ]]; then
+            echo "Expected output file not found for ${DISK_TYPE}: '${src}'" >&2
+            exit 1
+          fi
 
           # Stage the output under a stable, human-friendly filename
           mkdir -p latest_stage
-          for f in "$SOURCE_DIR"/*."$ext"; do
-            [[ -f "$f" ]] || continue
-            cp "$f" "latest_stage/pulsaros-amd64.${ext}"
-          done
+          cp "$src" "latest_stage/pulsaros-amd64.${ext}"
 
-          # Regenerate the checksum against the renamed file
+          # Compute the checksum against the renamed file
           sum="$(sha256sum "latest_stage/pulsaros-amd64.${ext}" | awk '{print $1}')"
           echo "${sum}  pulsaros-amd64.${ext}" > "latest_stage/pulsaros-amd64.${ext}.sha256"
 
