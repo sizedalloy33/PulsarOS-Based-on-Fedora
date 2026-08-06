@@ -163,12 +163,13 @@ jobs:
           for typ, info in sorted(m.items()):
               label = "ISO (installer)" if typ == "anaconda-iso" else "QCOW2 (VM image)"
               url = f"{base}/pulsaros/latest/{info['filename']}"
+              sha_url = f"{url}.sha256"
               rows += f"""
               <tr>
                 <td>{label}</td>
                 <td><a href="{url}">{info['filename']}</a></td>
                 <td>{human(info['size'])}</td>
-                <td><code>{info['sha256'][:12]}\u2026</code></td>
+                <td><a href="{sha_url}">SHA256</a></td>
                 <td>{info['date']}</td>
               </tr>"""
 
