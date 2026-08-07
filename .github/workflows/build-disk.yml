@@ -42,7 +42,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        disk-type: ["qcow2", "anaconda-iso", "iso"]
+        disk-type: ["qcow2", "anaconda-iso"]
     permissions:
       contents: read
       packages: read
@@ -94,7 +94,6 @@ jobs:
           DISK_TYPE: ${{ matrix.disk-type }}
           QCOW2_PATH: ${{ steps.build.outputs.qcow2-output-path }}
           ISO_PATH: ${{ steps.build.outputs.anaconda-iso-output-path }}
-          OUTPUT_DIR: ${{ steps.build.outputs.output-directory }}
         run: |
           set -euo pipefail
           sudo apt-get update -y && sudo apt-get install -y rclone jq
@@ -103,17 +102,10 @@ jobs:
             ext="qcow2"
             filename="pulsaros-amd64.qcow2"
             src="$QCOW2_PATH"
-          elif [[ "$DISK_TYPE" == "anaconda-iso" ]]; then
+          else
             ext="iso"
             filename="pulsaros-amd64-install.iso"
             src="$ISO_PATH"
-          else
-            # Plain "iso" (live-boot) type — the action doesn't expose a
-            # dedicated output path for this type, so locate the built file
-            # under output-directory instead.
-            ext="iso"
-            filename="pulsaros-amd64-live.iso"
-            src="$(find "$OUTPUT_DIR" -type f -name '*.iso' | head -n1)"
           fi
 
           if [[ -z "$src" || ! -f "$src" ]]; then
@@ -146,6 +138,116 @@ jobs:
              manifest.json > manifest.new.json
           rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json" --no-update-modtime --ignore-times
 
+      - name: Upload build as job artifact (non-main test runs)
+        if: github.event_name != 'pull_request' && github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-${{ matrix.disk-type }}
+          path: |
+            ${{ steps.build.outputs.qcow2-output-path }}
+            ${{ steps.build.outputs.anaconda-iso-output-path }}
+          if-no-files-found: ignore
+          retention-days: 3
+
+build-live-iso:
+    name: Build live ISO (Titanoboa)
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+ 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+ 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+ 
+      - name: Build live ISO with Titanoboa
+        id: titanoboa
+        uses: ublue-os/titanoboa@main
+        with:
+          image-ref: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
+          builder-distro: fedora
+          iso-dest: ${{ github.workspace }}/output/pulsaros-amd64-live.iso
+ 
+      - name: Upload live ISO to Cloudflare R2 (latest only)
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y rclone jq
+ 
+          filename="pulsaros-amd64-live.iso"
+          src="${{ github.workspace }}/output/${filename}"
+ 
+          if [[ ! -f "$src" ]]; then
+            echo "Expected live ISO not found at '${src}'" >&2
+            exit 1
+          fi
+ 
+          mkdir -p latest_stage
+          cp "$src" "latest_stage/${filename}"
+ 
+          sum="$(sha256sum "latest_stage/${filename}" | awk '{print $1}')"
+          echo "${sum}  ${filename}" > "latest_stage/${filename}.sha256"
+ 
+          rclone backend cleanup "R2:${R2_BUCKET}" || true
+ 
+          rclone copy latest_stage "R2:${R2_BUCKET}/pulsaros/latest" \
+            --no-update-modtime --ignore-times --s3-chunk-size 100M --progress
+ 
+          set +e
+          rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json --no-update-modtime
+          dl_status=$?
+          set -e
+          if [[ ${dl_status} -ne 0 || ! -f manifest.json ]]; then
+            echo '{}' > manifest.json
+          fi
+ 
+          size="$(stat -c%s "latest_stage/${filename}")"
+          date="$(date -u +%Y%m%d)"
+          jq --arg type "live-iso" --arg filename "$filename" \
+             --arg size "$size" --arg sha "$sum" --arg date "$date" \
+             '.[$type] = {filename: $filename, size: ($size|tonumber), sha256: $sha, date: $date}' \
+             manifest.json > manifest.new.json
+ 
+          for attempt in 1 2 3; do
+            if rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json" --no-update-modtime --ignore-times; then
+              break
+            fi
+            echo "Manifest upload attempt ${attempt} failed, retrying..." >&2
+            sleep 5
+            if [[ "${attempt}" == "3" ]]; then
+              echo "Manifest upload failed after 3 attempts" >&2
+              exit 1
+            fi
+          done
+ 
+      - name: Upload live ISO as job artifact (non-main test runs)
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-live-iso
+          path: ${{ github.workspace }}/output/pulsaros-amd64-live.iso
+          if-no-files-found: error
+          retention-days: 3
+
+  publish-page:
+    name: Regenerate download page
+    needs: [build, build-live-iso]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+ 
+    steps:
       - name: Regenerate download page
         if: github.event_name != 'pull_request'
         shell: bash
