@@ -39,6 +39,21 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
     /ctx/build.sh
 
+# Titanboa reads this file to configure the live ISO's label and GRUB
+# boot menu entry. See https://github.com/ublue-os/titanoboa for the format.
+
+RUN mkdir -p /usr/lib/bootc-image-builder && \
+    cat > /usr/lib/bootc-image-builder/iso.yaml << 'YAML'
+label: "PulsarOS-Live"
+grub2:
+    default: 0
+    timeout: 10
+    entries:
+    - name: "PulsarOS Live"
+      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=PulsarOS-Live enforcing=0 rd.live.image"
+      initrd: "/images/pxeboot/initrd.img"
+YAML
+
 ### LINTING
 ## Verify final image and contents are correct.
 RUN bootc container lint
