@@ -187,10 +187,10 @@ jobs:
 
       - name: Login to GitHub Container Registry
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Pull base image
-        run: podman pull ghcr.io/sizedalloy33/pulsaros:live-test
+        run: sudo podman pull ghcr.io/sizedalloy33/pulsaros:live-test
 
       - name: Build live ISO with Titanoboa
         id: titanoboa
