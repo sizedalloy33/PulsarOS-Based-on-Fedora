@@ -119,10 +119,9 @@ jobs:
           fi
 
           mkdir -p latest_stage
-          cp "$src" "latest_stage/${filename}"
-
-          sum="$(sha256sum "latest_stage/${filename}" | awk '{print $1}')"
-          echo "${sum}  ${filename}" > "latest_stage/${filename}.sha256"
+          mv "$src" "latest_stage/${filename}"
+ 
+          sum="$(cd latest_stage && sha256sum "${filename}" | tee "${filename}.sha256" | awk '{print $1}')"
 
           # Clear out any incomplete multipart uploads left behind by a prior
           # interrupted run, which can otherwise interfere with later
@@ -146,20 +145,7 @@ jobs:
              --arg size "$size" --arg sha "$sum" --arg date "$date" \
              '.[$type] = {filename: $filename, size: ($size|tonumber), sha256: $sha, date: $date}' \
              manifest.json > manifest.new.json
-
-          # Retry the manifest write with a short backoff in case of a
-          # transient AccessDenied right after a large multipart upload.
-          for attempt in 1 2 3; do
-            if rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json" --no-update-modtime --ignore-times; then
-              break
-            fi
-            echo "Manifest upload attempt ${attempt} failed, retrying..." >&2
-            sleep 5
-            if [[ "${attempt}" == "3" ]]; then
-              echo "Manifest upload failed after 3 attempts" >&2
-              exit 1
-            fi
-          done
+          rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json" --no-update-modtime --ignore-times
 
       - name: Upload build as job artifact (non-main test runs)
         if: github.event_name != 'pull_request' && github.ref != 'refs/heads/main'
@@ -204,12 +190,13 @@ jobs:
         shell: bash
         env:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          SRC_ISO: ${{ steps.titanoboa.outputs.iso-dest }}
         run: |
           set -euo pipefail
           sudo apt-get update -y && sudo apt-get install -y rclone jq
 
           filename="pulsaros-amd64-live.iso"
-          src="${{ github.workspace }}/output/${filename}"
+          src="$SRC_ISO"
 
           if [[ ! -f "$src" ]]; then
             echo "Expected live ISO not found at '${src}'" >&2
@@ -217,10 +204,9 @@ jobs:
           fi
 
           mkdir -p latest_stage
-          cp "$src" "latest_stage/${filename}"
-
-          sum="$(sha256sum "latest_stage/${filename}" | awk '{print $1}')"
-          echo "${sum}  ${filename}" > "latest_stage/${filename}.sha256"
+          mv "$src" "latest_stage/${filename}"
+ 
+          sum="$(cd latest_stage && sha256sum "${filename}" | tee "${filename}.sha256" | awk '{print $1}')"
 
           rclone backend cleanup "R2:${R2_BUCKET}" || true
 
@@ -249,7 +235,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-live-iso
-          path: ${{ github.workspace }}/output/pulsaros-amd64-live.iso
+          path: ${{ steps.titanoboa.outputs.iso-dest }}
           if-no-files-found: error
           retention-days: 3
 
