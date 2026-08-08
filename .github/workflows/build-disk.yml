@@ -8,6 +8,11 @@ run-name: Build disk images (${{ github.event_name }})
 
 on:
   workflow_dispatch:
+      inputs:
+      image-tag:
+        description: "Container image tag to build from (optional; defaults to 'latest')"
+        required: false
+        type: string
   pull_request:
     branches:
       - main
