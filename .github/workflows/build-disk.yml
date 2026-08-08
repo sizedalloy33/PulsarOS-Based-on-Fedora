@@ -183,7 +183,6 @@ jobs:
         uses: ublue-os/titanoboa@main
         with:
           image-ref: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
-          iso-dest: ${{ github.workspace }}/output/pulsaros-amd64-live.iso
 
       - name: Upload live ISO to Cloudflare R2 (latest only)
         if: github.ref == 'refs/heads/main'
