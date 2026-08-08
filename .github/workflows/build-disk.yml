@@ -8,6 +8,11 @@ run-name: Build disk images (${{ github.event_name }})
 
 on:
   workflow_dispatch:
+    inputs:
+      image-tag:
+        description: "Container image tag to build from (optional; defaults to 'latest')"
+        required: false
+        type: string
   pull_request:
     branches:
       - main
@@ -19,7 +24,7 @@ on:
 env:
   IMAGE_NAME: "pulsaros" # output of build.yml, keep in sync
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
-  DEFAULT_TAG: "latest"
+  DEFAULT_TAG: ${{ inputs.image-tag || 'latest' }}
   BIB_IMAGE: "quay.io/centos-bootc/bootc-image-builder:latest"
   # Global rclone R2 configuration & compatibility flags
   RCLONE_CONFIG_R2_TYPE: s3
@@ -42,7 +47,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        disk-type: ["qcow2", "anaconda-iso", "iso"]
+        disk-type: ["qcow2", "anaconda-iso"]
     permissions:
       contents: read
       packages: read
@@ -87,33 +92,25 @@ jobs:
           additional-args: --use-librepo=True --rootfs btrfs
 
       - name: Upload to Cloudflare R2 (latest only)
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           DISK_TYPE: ${{ matrix.disk-type }}
           QCOW2_PATH: ${{ steps.build.outputs.qcow2-output-path }}
           ISO_PATH: ${{ steps.build.outputs.anaconda-iso-output-path }}
-          OUTPUT_DIR: ${{ steps.build.outputs.output-directory }}
         run: |
           set -euo pipefail
           sudo apt-get update -y && sudo apt-get install -y rclone jq
 
-           if [[ "$DISK_TYPE" == "qcow2" ]]; then
+          if [[ "$DISK_TYPE" == "qcow2" ]]; then
             ext="qcow2"
             filename="pulsaros-amd64.qcow2"
             src="$QCOW2_PATH"
-          elif [[ "$DISK_TYPE" == "anaconda-iso" ]]; then
+          else
             ext="iso"
             filename="pulsaros-amd64-install.iso"
             src="$ISO_PATH"
-          else
-            # Plain "iso" (live-boot) type — the action doesn't expose a
-            # dedicated output path for this type, so locate the built file
-            # under output-directory instead.
-            ext="iso"
-            filename="pulsaros-amd64-live.iso"
-            src="$(find "$OUTPUT_DIR" -type f -name '*.iso' | head -n1)"
           fi
 
           if [[ -z "$src" || ! -f "$src" ]]; then
@@ -122,10 +119,14 @@ jobs:
           fi
 
           mkdir -p latest_stage
-          cp "$src" "latest_stage/${filename}"
+          mv "$src" "latest_stage/${filename}"
+ 
+          sum="$(cd latest_stage && sha256sum "${filename}" | tee "${filename}.sha256" | awk '{print $1}')"
 
-          sum="$(sha256sum "latest_stage/${filename}" | awk '{print $1}')"
-          echo "${sum}  ${filename}" > "latest_stage/${filename}.sha256"
+          # Clear out any incomplete multipart uploads left behind by a prior
+          # interrupted run, which can otherwise interfere with later
+          # overwrites of the same keys.
+          rclone backend cleanup "R2:${R2_BUCKET}" || true
 
           rclone copy latest_stage "R2:${R2_BUCKET}/pulsaros/latest" \
             --no-update-modtime --ignore-times --s3-chunk-size 100M --progress
@@ -146,8 +147,105 @@ jobs:
              manifest.json > manifest.new.json
           rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json" --no-update-modtime --ignore-times
 
+      - name: Upload build as job artifact (non-main test runs)
+        if: github.event_name != 'pull_request' && github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-${{ matrix.disk-type }}
+          path: |
+            ${{ steps.build.outputs.qcow2-output-path }}
+            ${{ steps.build.outputs.anaconda-iso-output-path }}
+          if-no-files-found: ignore
+          retention-days: 3
+
+  build-live-iso:
+    name: Build live ISO (Titanoboa)
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Login to GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull base image
+        run: sudo podman pull ghcr.io/sizedalloy33/pulsaros:live-test
+
+      - name: Build live ISO with Titanoboa
+        id: titanoboa
+        uses: ublue-os/titanoboa@main
+        with:
+          image-ref: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
+
+      - name: Upload live ISO to Cloudflare R2 (latest only)
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          SRC_ISO: ${{ steps.titanoboa.outputs.iso-dest }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y rclone jq
+
+          filename="pulsaros-amd64-live.iso"
+          src="$SRC_ISO"
+
+          if [[ ! -f "$src" ]]; then
+            echo "Expected live ISO not found at '${src}'" >&2
+            exit 1
+          fi
+
+          mkdir -p latest_stage
+          mv "$src" "latest_stage/${filename}"
+ 
+          sum="$(cd latest_stage && sha256sum "${filename}" | tee "${filename}.sha256" | awk '{print $1}')"
+
+          rclone backend cleanup "R2:${R2_BUCKET}" || true
+
+          rclone copy latest_stage "R2:${R2_BUCKET}/pulsaros/latest" \
+            --no-update-modtime --ignore-times --s3-chunk-size 100M --progress
+
+          set +e
+          rclone copyto "R2:${R2_BUCKET}/pulsaros/manifest.json" manifest.json --no-update-modtime
+          dl_status=$?
+          set -e
+          if [[ ${dl_status} -ne 0 || ! -f manifest.json ]]; then
+            echo '{}' > manifest.json
+          fi
+
+          size="$(stat -c%s "latest_stage/${filename}")"
+          date="$(date -u +%Y%m%d)"
+          jq --arg type "live-iso" --arg filename "$filename" \
+             --arg size "$size" --arg sha "$sum" --arg date "$date" \
+             '.[$type] = {filename: $filename, size: ($size|tonumber), sha256: $sha, date: $date}' \
+             manifest.json > manifest.new.json
+          rclone copyto manifest.new.json "R2:${R2_BUCKET}/pulsaros/manifest.json" --no-update-modtime --ignore-times
+
+
+      - name: Upload live ISO as job artifact (non-main test runs)
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-live-iso
+          path: ${{ steps.titanoboa.outputs.iso-dest }}
+          if-no-files-found: error
+          retention-days: 3
+
+  publish-page:
+    name: Regenerate download page
+    needs: [build, build-live-iso]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+
+    steps:
       - name: Regenerate download page
-        if: github.event_name != 'pull_request'
         shell: bash
         env:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
@@ -171,9 +269,9 @@ jobs:
 
           rows = ""
           labels = {
-            "qcow2": "QCOW2 (VM image)",
-            "anaconda-iso": "ISO (installer)",
-            "iso": "Live ISO (try before install)",
+              "qcow2": "QCOW2 (VM image)",
+              "anaconda-iso": "ISO (installer)",
+              "live-iso": "Live ISO (try before install)",
           }
           for typ, info in sorted(m.items()):
               label = labels.get(typ, typ)
@@ -192,7 +290,7 @@ jobs:
           <title>PulsarOS Downloads</title>
           <style>body{{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 16px}}
           table{{width:100%;border-collapse:collapse}} td,th{{padding:8px;border-bottom:1px solid #ddd;text-align:left}}
-          a{{text-decoration:none}} code{{font-size:0.85em;color:#666}}</style></head>
+          a{{text-decoration:none}}</style></head>
           <body><h1>PulsarOS Downloads</h1>
           <p>Always the latest build. Verify with the sha256 file next to each image.</p>
           <table><tr><th>Type</th><th>File</th><th>Size</th><th>SHA256</th><th>Built</th></tr>
