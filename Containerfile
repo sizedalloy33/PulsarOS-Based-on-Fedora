@@ -54,19 +54,17 @@ RUN sed -i "s/^livesys_session=.*/livesys_session=kde/" /etc/sysconfig/livesys &
 
 # Titanboa reads this file to configure the live ISO's label and GRUB
 # boot menu entry. See https://github.com/ublue-os/titanoboa for the format.
-RUN <<EOF
-mkdir -p /usr/lib/bootc-image-builder
-cat > /usr/lib/bootc-image-builder/iso.yaml << 'YAML'
-label: "PulsarOS-Live"
-grub2:
-    default: 0
-    timeout: 10
-    entries:
-    - name: "PulsarOS Live"
-      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=PulsarOS-Live enforcing=0 rd.live.image"
-      initrd: "/images/pxeboot/initrd.img"
-YAML
-EOF
+RUN mkdir -p /usr/lib/bootc-image-builder && \
+    printf '%s\n' \
+      'label: "PulsarOS-Live"' \
+      'grub2:' \
+      '    default: 0' \
+      '    timeout: 10' \
+      '    entries:' \
+      '    - name: "PulsarOS Live"' \
+      '      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=PulsarOS-Live enforcing=0 rd.live.image"' \
+      '      initrd: "/images/pxeboot/initrd.img"' \
+      > /usr/lib/bootc-image-builder/iso.yaml
 
 ### LINTING
 ## Verify final image and contents are correct.
