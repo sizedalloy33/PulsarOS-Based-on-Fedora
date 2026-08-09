@@ -86,7 +86,7 @@ jobs:
             echo "| Type | Link |"
             echo "|---|---|"
             echo "| Installer ISO | ${BASE_URL%/}/pulsaros/latest/pulsaros-amd64-install.iso |"
-            echo "| Live ISO (try before install) IN TESTING | ${BASE_URL%/}/pulsaros/latest/pulsaros-amd64-live.iso |"
+            echo "| Live ISO (try before install) | ${BASE_URL%/}/pulsaros/latest/pulsaros-amd64-live.iso |"
             echo "| QCOW2 | ${BASE_URL%/}/pulsaros/latest/pulsaros-amd64.qcow2 |"
           } > body.md
 
